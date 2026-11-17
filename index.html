@@ -108,6 +108,18 @@ canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(
 
   <section class="panel">
     <div class="head">
+      <h2>Live spectrum</h2>
+      <div class="row">
+        <div class="legend"><span style="--c:var(--a)">A</span><span style="--c:var(--b)">B</span><span style="--c:var(--shared)">Shared</span></div>
+        <span class="stat">Shared now <b id="liveband"></b></span>
+      </div>
+    </div>
+    <canvas id="live" class="plot"></canvas>
+    <p class="note">Left to right is frequency (log scale, 20 Hz to 20 kHz). Up is how loud each frequency is right now, in decibels. Purple marks frequencies both sounds contain at the same moment; "Shared now" lists where both are louder than −60 dB. Two pure tones barely share any frequencies, while recordings, voices and noise share a lot. Nearby tones can still mask each other because the ear blurs neighbouring frequencies, shown in the next plot.</p>
+  </section>
+
+  <section class="panel">
+    <div class="head">
       <h2>Cochlear excitation</h2>
       <div class="row">
         <span class="stat">Overlap <b id="ov"></b> of the smaller pattern</span>
@@ -264,15 +276,57 @@ function drawWave(s) {
   g.fillText(+t0.toFixed(1) + " ms", 6, H - 6); g.textAlign = "right"; g.fillText(+(t0 + s.win).toFixed(1) + " ms", W - 6, H - 6); g.textAlign = "left";
 }
 
-function drawSpec(s) {
-  const [g, W, H] = setup($("spec")), base = H - 24, sc = base - 10, N = Math.ceil(W);
-  const f = i => sliderToHz((i / N) * 1000), x = i => (i / N) * W, ea = exFn("a", s), eb = exFn("b", s);
+function freqAxis(g, W, H, base) {
   g.strokeStyle = col("--grid"); g.fillStyle = col("--muted"); g.font = "18px " + col("--mono"); g.lineWidth = 2;
   for (const [hz, lab] of [[20, "20 Hz"], [50, "50"], [100, "100"], [200, "200"], [500, "500"], [1000, "1k"], [2000, "2k"], [5000, "5k"], [10000, "10k"], [20000, "20k"]]) {
     const px = hzToSlider(hz) / 1000 * W;
     g.beginPath(); g.moveTo(px, 0); g.lineTo(px, base); g.stroke();
     g.textAlign = hz === 20 ? "left" : hz === 20000 ? "right" : "center"; g.fillText(lab, px + (hz === 20 ? 4 : hz === 20000 ? -4 : 0), H - 6);
   }
+  g.textAlign = "left";
+}
+
+// Live spectrum: x = frequency (log), y = level in dBFS, from each voice's analyser after its loudness gain.
+const DB_MIN = -110, DB_MAX = -10, DB_SHARED = -60;
+function drawLive() {
+  const [g, W, H] = setup($("live")), base = H - 24, top = 8, N = Math.ceil(W);
+  const y = d => base - (Math.min(DB_MAX, Math.max(DB_MIN, d)) - DB_MIN) / (DB_MAX - DB_MIN) * (base - top);
+  freqAxis(g, W, H, base);
+  g.strokeStyle = col("--grid"); g.fillStyle = col("--muted");
+  for (let d = -100; d <= -20; d += 20) { g.beginPath(); g.moveTo(0, y(d)); g.lineTo(W, y(d)); g.stroke(); g.fillText(d + " dB", 4, y(d) - 4); }
+  if (!Object.keys(voices).length) {
+    g.fillStyle = col("--fg"); g.textAlign = "center"; g.fillText("Press Play to see each frequency's volume live", W / 2, base / 2); g.textAlign = "left";
+    $("liveband").textContent = "—"; return;
+  }
+  const levels = k => {
+    const v = voices[k]; if (!v) return null;
+    v.db = v.db || new Float32Array(v.sp.frequencyBinCount); v.sp.getFloatFrequencyData(v.db);
+    const bin = hz => hz * v.sp.fftSize / ctx.sampleRate, out = new Float32Array(N + 1);
+    // Each pixel column shows the loudest FFT bin it covers.
+    for (let px = 0; px <= N; px++) {
+      const lo = Math.floor(bin(sliderToHz(px / N * 1000))), hi = Math.max(lo, Math.floor(bin(sliderToHz((px + 1) / N * 1000))));
+      let m = -Infinity; for (let b = lo; b <= hi && b < v.db.length; b++) m = Math.max(m, v.db[b]);
+      out[px] = m;
+    }
+    return out;
+  };
+  const A = levels("a"), B = levels("b"), x = px => px / N * W;
+  if (A && B) {
+    g.fillStyle = col("--shared"); g.globalAlpha = 0.5; g.beginPath(); g.moveTo(0, base);
+    for (let px = 0; px <= N; px++) g.lineTo(x(px), y(Math.min(A[px], B[px])));
+    g.lineTo(W, base); g.fill(); g.globalAlpha = 1;
+  }
+  if (A) line(g, N, px => [x(px), y(A[px])], col("--a"), 2);
+  if (B) line(g, N, px => [x(px), y(B[px])], col("--b"), 2);
+  let lo = -1, hi = -1;
+  if (A && B) for (let px = 0; px <= N; px++) if (Math.min(A[px], B[px]) > DB_SHARED) { if (lo < 0) lo = px; hi = px; }
+  $("liveband").textContent = !(A && B) ? "play both" : lo < 0 ? "none" : fmtHz(sliderToHz(lo / N * 1000)) + " to " + fmtHz(sliderToHz((hi + 1) / N * 1000));
+}
+
+function drawSpec(s) {
+  const [g, W, H] = setup($("spec")), base = H - 24, sc = base - 10, N = Math.ceil(W);
+  const f = i => sliderToHz((i / N) * 1000), x = i => (i / N) * W, ea = exFn("a", s), eb = exFn("b", s);
+  freqAxis(g, W, H, base);
   g.fillStyle = col("--shared"); g.globalAlpha = 0.45; g.beginPath(); g.moveTo(0, base);
   for (let i = 0; i <= N; i++) g.lineTo(x(i), base - Math.min(ea(f(i)), eb(f(i))) * sc);
   g.lineTo(W, base); g.fill(); g.globalAlpha = 1;
@@ -291,16 +345,16 @@ function render() {
   let lo = -1, hi = -1;
   for (let j = 0; j <= 1000; j++) if (Math.min(ea(sliderToHz(j)), eb(sliderToHz(j))) > 0.02) { if (lo < 0) lo = j; hi = j; }
   $("band").textContent = lo < 0 ? "none" : fmtHz(sliderToHz(lo)) + " to " + fmtHz(sliderToHz(hi));
-  drawWave(s); drawSpec(s); syncAudio(s);
+  drawWave(s); drawLive(); drawSpec(s); syncAudio(s);
 }
 const renderAll = () => { drawGround(); render(); };
 
 // Animation: advance the wave window while sound plays. Slowed speeds make fast waves visible.
 let anim = 0, raf = 0, last = 0, playStart = 0;
 function tick(now) {
-  if (!Object.keys(voices).length || !$("move").checked) { raf = 0; return; }
+  if (!Object.keys(voices).length) { raf = 0; render(); return; }
   const sp = +$("speed").value;
-  if (sp === 1) anim = Math.max(0, ctx.currentTime - playStart); else anim += (now - last) / 1000 * sp;
+  if ($("move").checked) { if (sp === 1) anim = Math.max(0, ctx.currentTime - playStart); else anim += (now - last) / 1000 * sp; }
   last = now;
   for (const k in voices) if (voices[k].an) liveSpec(k);
   render();
@@ -361,7 +415,9 @@ function play(keys, btn) {
   for (const k of keys) {
     const g = ctx.createGain(); let o;
     if (files[k]) { o = ctx.createBufferSource(); o.buffer = files[k].buf; o.loop = true; } else o = ctx.createOscillator();
-    g.gain.value = 0; o.connect(g).connect(ctx.destination); voices[k] = { o, g };
+    g.gain.value = 0; o.connect(g).connect(ctx.destination);
+    const sp = ctx.createAnalyser(); sp.fftSize = 8192; sp.smoothingTimeConstant = 0.6; g.connect(sp);
+    voices[k] = { o, g, sp };
     if (files[k]) { const an = ctx.createAnalyser(); an.fftSize = 8192; o.connect(an); voices[k].an = an; }
   }
   // Start every voice at the same instant so real-time mode lines up with what you hear.
