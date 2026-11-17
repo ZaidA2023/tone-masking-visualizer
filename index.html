@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tone Masking Visualizer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&family=VT323&display=swap">
+<style>
+/* Layout: pixel canopy banner, chunky 8-bit control cards per sound, two stacked scope panels, grass strip at the foot. */
+:root {
+  --bg: #dcefc4; --panel: #f4fae6; --fg: #1c3a1a; --muted: #4c6a3c; --grid: #b6d496; --edge: #1c3a1a; --drop: #7fa95e;
+  --a: #2b67b0; --b: #c4521a; --shared: #7a3cb0; --sum: #1c3a1a; --err: #b3261e;
+  --leaf: #5fae3b; --leaf-hi: #94d45a; --leaf-dk: #2f6b26; --stem: #6b4a2a; --flower: #f2c94c; --soil: #8a6236;
+  --display: "Press Start 2P", ui-monospace, monospace;
+  --body: "Pixelify Sans", system-ui, sans-serif;
+  --mono: "VT323", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1b11; --panel: #16281a; --fg: #def0c4; --muted: #9dbb86; --grid: #2a4430; --edge: #9dd46a; --drop: #050c07;
+  --a: #6aa8ff; --b: #ff9257; --shared: #c58bff; --sum: #def0c4; --err: #ff8a80;
+  --leaf: #3f8a2c; --leaf-hi: #6fbb45; --leaf-dk: #1e4a1b; --stem: #5a3e24; --flower: #e8b93c; --soil: #4a3420; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1b11; --panel: #16281a; --fg: #def0c4; --muted: #9dbb86; --grid: #2a4430; --edge: #9dd46a; --drop: #050c07;
+  --a: #6aa8ff; --b: #ff9257; --shared: #c58bff; --sum: #def0c4; --err: #ff8a80;
+  --leaf: #3f8a2c; --leaf-hi: #6fbb45; --leaf-dk: #1e4a1b; --stem: #5a3e24; --flower: #e8b93c; --soil: #4a3420; color-scheme: dark }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 17px;
+  padding-block: 0 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.pix { display: block; width: 100%; image-rendering: pixelated; }
+#canopy { height: 72px; }
+#ground { height: 48px; margin-top: 32px; }
+main { max-width: 980px; margin: 0 auto; display: grid; gap: 22px; }
+h1 { font-family: var(--display); font-size: clamp(18px, 4vw, 28px); line-height: 1.4; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 13px; line-height: 1.5; margin: 0; }
+p { margin: 0; color: var(--muted); max-width: 65ch; line-height: 1.45; }
+.tones { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.tone, .panel { background: var(--panel); border: 4px solid var(--edge); box-shadow: 6px 6px 0 var(--drop); padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.tone h2 { display: flex; align-items: center; gap: 10px; }
+.dot { width: 14px; height: 14px; box-shadow: 0 0 0 3px var(--edge); }
+label { display: grid; grid-template-columns: 86px 1fr 80px; align-items: center; gap: 10px; font-size: 15px; color: var(--muted); }
+output { font-family: var(--mono); font-size: 21px; color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; }
+#fa, #aa { accent-color: var(--a); } #fb, #ab { accent-color: var(--b); } #win, #start, #sum { accent-color: var(--leaf-dk); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button, input[type=file]::file-selector-button { font: 600 15px var(--body); padding: 8px 14px; border: 3px solid var(--edge); background: var(--panel); color: var(--fg); cursor: pointer; box-shadow: 3px 3px 0 var(--drop); border-radius: 0; }
+input[type=file]::file-selector-button { margin-right: 10px; }
+button:hover, input[type=file]:hover::file-selector-button { background: var(--grid); }
+button:active { transform: translate(3px, 3px); box-shadow: none; }
+button:focus-visible, input:focus-visible { outline: 3px dashed var(--shared); outline-offset: 3px; }
+button.on { background: var(--leaf-dk); color: #f4fae6; }
+input[type=file] { font: 15px var(--body); color: var(--muted); max-width: 100%; }
+.fname { font-family: var(--mono); font-size: 19px; overflow-wrap: anywhere; }
+.fname.err { color: var(--err); font-family: var(--body); font-size: 15px; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 15px; color: var(--muted); align-items: center; }
+.legend span::before { content: ""; display: inline-block; width: 16px; height: 4px; margin-right: 6px; vertical-align: middle; background: var(--c); }
+canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(--grid); }
+.stat { font-family: var(--mono); font-size: 21px; padding: 2px 10px; background: var(--bg); border: 3px solid var(--edge); font-variant-numeric: tabular-nums; }
+.stat b { color: var(--shared); font-weight: 400; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 15px; color: var(--muted); grid-template-columns: none; }
+.note { font-size: 15px; }
+@media (prefers-reduced-motion: reduce) { button:active { transform: none; } }
+</style>
+
+<canvas id="canopy" class="pix" aria-hidden="true"></canvas>
+<main>
+  <header style="display:grid;gap:10px">
+    <h1>Tone Masking Visualizer</h1>
+    <p>Use two pure tones or upload two recordings. The top plot overlays their sound waves; purple shading marks where they push the air the same way. The bottom plot shows the stretch of the cochlea each sound excites. Where those regions overlap, the louder sound can mask the quieter one.</p>
+  </header>
+
+  <section class="tones">
+    <div class="tone">
+      <h2><span class="dot" style="background:var(--a)"></span>Sound A</h2>
+      <label for="fa">Frequency <input id="fa" type="range" min="0" max="1000" value="566"><output id="fao"></output></label>
+      <label for="aa">Loudness <input id="aa" type="range" min="0" max="100" value="80"><output id="aao"></output></label>
+      <div class="row"><input id="filea" type="file" accept="audio/*" aria-label="Upload audio for sound A"><button id="cleara" hidden>Use tone instead</button></div>
+      <span id="namea" class="fname" hidden></span>
+    </div>
+    <div class="tone">
+      <h2><span class="dot" style="background:var(--b)"></span>Sound B</h2>
+      <label for="fb">Frequency <input id="fb" type="range" min="0" max="1000" value="580"><output id="fbo"></output></label>
+      <label for="ab">Loudness <input id="ab" type="range" min="0" max="100" value="45"><output id="abo"></output></label>
+      <div class="row"><input id="fileb" type="file" accept="audio/*" aria-label="Upload audio for sound B"><button id="clearb" hidden>Use tone instead</button></div>
+      <span id="nameb" class="fname" hidden></span>
+    </div>
+  </section>
+
+  <div class="row">
+    <button id="pa">Play A</button><button id="pb">Play B</button><button id="pab">Play both</button>
+    <span style="font-size:15px;color:var(--muted)">Keep your volume low before pressing play.</span>
+  </div>
+
+  <section class="panel">
+    <div class="head">
+      <h2>Sound waves</h2>
+      <div class="legend">
+        <span style="--c:var(--a)">A</span><span style="--c:var(--b)">B</span><span style="--c:var(--shared)">Shared</span>
+        <label class="check" for="sum"><input id="sum" type="checkbox"> Show A + B</label>
+      </div>
+    </div>
+    <label for="win">Time shown <input id="win" type="range" min="2" max="100" value="10"><output id="wino"></output></label>
+    <label for="start" id="startl" hidden>Start at <input id="start" type="range" min="0" max="1000" value="0"><output id="starto"></output></label>
+    <canvas id="wave" class="plot"></canvas>
+  </section>
+
+  <section class="panel">
+    <div class="head">
+      <h2>Cochlear excitation</h2>
+      <span class="stat">Overlap <b id="ov"></b> of the smaller pattern</span>
+    </div>
+    <canvas id="spec" class="plot"></canvas>
+    <p class="note">Horizontal axis is frequency on a log scale (20 Hz to 20 kHz, roughly the human range). Each tone is a bump about one critical band wide (Glasberg &amp; Moore ERB). An uploaded recording is analysed from its middle section and smoothed to critical-band resolution. Bands widen at high frequencies, so sounds there need to be farther apart to escape masking.</p>
+  </section>
+</main>
+<canvas id="ground" class="pix" aria-hidden="true"></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+const FMIN = 20, FMAX = 20000;
+const sliderToHz = v => FMIN * Math.pow(FMAX / FMIN, v / 1000);
+const hzToSlider = f => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * 1000;
+// ERB-rate scale: position along the cochlea in "critical band" units.
+const erbRate = f => 21.4 * Math.log10(1 + 0.00437 * f);
+const erbWidth = f => 24.7 * (4.37 * f / 1000 + 1);
+const excite = (f, amp, f0) => amp * Math.exp(-((erbRate(f) - erbRate(f0)) ** 2) / 2);
+
+// Uploaded recordings, keyed "a" / "b". null means use the tone sliders.
+const files = { a: null, b: null };
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+
+// Spectrum of the middle of the recording, averaged over one ERB around each of 1001 log-spaced points, peak = 1.
+// shortcut: boxcar ERB smoothing, not a true auditory filterbank; fine for a classroom picture.
+function spectrum(data, sr) {
+  let n = 1; while (n * 2 <= Math.min(data.length, 32768)) n *= 2;
+  const off = Math.floor((data.length - n) / 2), re = new Float64Array(n), im = new Float64Array(n);
+  for (let i = 0; i < n; i++) re[i] = data[off + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)));
+  fft(re, im);
+  const spec = new Float32Array(1001); let max = 0;
+  for (let j = 0; j <= 1000; j++) {
+    const f = sliderToHz(j), bw = erbWidth(f);
+    const lo = Math.max(1, Math.floor((f - bw / 2) * n / sr)), hi = Math.min(n / 2, Math.ceil((f + bw / 2) * n / sr));
+    let s = 0, c = 0; for (let b = lo; b <= hi; b++) { s += re[b] ** 2 + im[b] ** 2; c++; }
+    spec[j] = c ? Math.sqrt(s / c) : 0; max = Math.max(max, spec[j]);
+  }
+  if (max) for (let j = 0; j <= 1000; j++) spec[j] /= max;
+  return spec;
+}
+function specAt(F, f) {
+  const x = Math.min(1000, Math.max(0, hzToSlider(f))), i = Math.floor(x), t = x - i;
+  return i >= 1000 ? F.spec[1000] : F.spec[i] * (1 - t) + F.spec[i + 1] * t;
+}
+
+const exFn = (k, s) => files[k] ? f => s["a" + k] * specAt(files[k], f) : f => excite(f, s["a" + k], s["f" + k]);
+function waveFn(k, s) {
+  const F = files[k], amp = s["a" + k];
+  if (!F) return t => amp * Math.sin(2 * Math.PI * s["f" + k] * t);
+  return t => { const v = F.data[Math.floor((t + s.start) * F.sr)]; return v === undefined ? 0 : amp * v / F.peak; };
+}
+
+function overlap(ea, eb) {
+  let shared = 0, sa = 0, sb = 0;
+  for (let i = 0; i <= 2000; i++) { const f = sliderToHz(i / 2), a = ea(f), b = eb(f); shared += Math.min(a, b); sa += a; sb += b; }
+  const small = Math.min(sa, sb);
+  return small ? shared / small : 0;
+}
+console.assert(overlap(f => excite(f, 1, 1000), f => excite(f, 1, 1000)) > 0.99, "same tone should fully overlap");
+console.assert(overlap(f => excite(f, 1, 100), f => excite(f, 1, 8000)) < 0.01, "distant tones should not overlap");
+{ // FFT self-check: a 1 kHz sine should peak near 1 kHz.
+  const d = new Float32Array(44100).map((_, i) => Math.sin(2 * Math.PI * 1000 * i / 44100)), sp = spectrum(d, 44100);
+  console.assert(Math.abs(sliderToHz(sp.indexOf(1)) - 1000) < 60, "spectrum peak should be near 1 kHz");
+}
+
+const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(2) + " kHz" : Math.round(f) + " Hz";
+const col = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const state = () => ({ fa: sliderToHz(+$("fa").value), fb: sliderToHz(+$("fb").value), aa: $("aa").value / 100, ab: $("ab").value / 100, win: +$("win").value, start: +$("start").value / 1000 });
+
+function setup(c) {
+  const r = c.getBoundingClientRect(), d = devicePixelRatio || 1;
+  c.width = r.width * d; c.height = r.height * d;
+  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0);
+  return [g, r.width, r.height];
+}
+function line(g, n, fn, color, w) {
+  g.beginPath(); g.strokeStyle = color; g.lineWidth = w;
+  for (let i = 0; i <= n; i++) { const [x, y] = fn(i); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.stroke();
+}
+
+// ---- 8-bit scenery: sprites are rows of palette letters, drawn one canvas pixel per cell, scaled up by CSS. ----
+const SPRITES = {
+  leaf: ["....kk..", "...kLlk.", "..kLllk.", ".kLlslk.", ".klslLk.", "kllsLk..", "kskkk...", "s......."],
+  leaf2: [".kk.....", "kllk....", "kLllk...", "klsllk..", ".kllsLk.", "..kllsk.", "...kkks.", ".......s"],
+  tuft: ["...l....", ".l.l..l.", ".l.ll.l.", "lllklll.", "llkkkll."],
+  flower: [".y.y.", "yyoyy", ".y.y.", "..l..", ".ll..", "..l.."],
+};
+function pal() { return { k: col("--leaf-dk"), l: col("--leaf"), L: col("--leaf-hi"), s: col("--stem"), y: col("--flower"), o: col("--stem") }; }
+function sprite(g, name, x, y, p) {
+  SPRITES[name].forEach((row, r) => [...row].forEach((ch, c) => { if (p[ch]) { g.fillStyle = p[ch]; g.fillRect(x + c, y + r, 1, 1); } }));
+}
+// Deterministic scatter so the scenery doesn't jump on every redraw.
+const rnd = seed => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+function drawCanopy() {
+  const c = $("canopy"), S = 4, W = Math.ceil(c.clientWidth / S), H = Math.ceil(c.clientHeight / S), g = c.getContext("2d"), p = pal(), r = rnd(7);
+  c.width = W; c.height = H;
+  g.fillStyle = p.k; g.fillRect(0, 0, W, 3);
+  for (let x = -4; x < W; x += 5) { const y = Math.floor(r() * (H - 9)); sprite(g, r() < 0.5 ? "leaf" : "leaf2", x, y, p); }
+}
+function drawGround() {
+  const c = $("ground"), S = 4, W = Math.ceil(c.clientWidth / S), H = Math.ceil(c.clientHeight / S), g = c.getContext("2d"), p = pal(), r = rnd(3);
+  c.width = W; c.height = H;
+  g.fillStyle = col("--soil"); g.fillRect(0, H - 4, W, 4);
+  g.fillStyle = p.k; g.fillRect(0, H - 5, W, 1);
+  for (let x = 0; x < W; x += 6) sprite(g, r() < 0.15 ? "flower" : "tuft", x + Math.floor(r() * 3), H - (r() < 0.15 ? 11 : 10), p);
+}
+
+function drawWave(s) {
+  const [g, W, H] = setup($("wave")), mid = H / 2, sc = H * 0.4, N = Math.ceil(W * 2);
+  const t = i => (i / N) * s.win / 1000, xa = i => (i / N) * W;
+  const wa = waveFn("a", s), wb = waveFn("b", s), A = i => wa(t(i)), B = i => wb(t(i));
+  g.strokeStyle = col("--grid"); g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, mid); g.lineTo(W, mid); g.stroke();
+  // Shared: where both waves have the same sign, fill up to the smaller one.
+  g.fillStyle = col("--shared"); g.globalAlpha = 0.35; g.beginPath(); g.moveTo(0, mid);
+  for (let i = 0; i <= N; i++) { const a = A(i), b = B(i); const v = a * b > 0 ? Math.sign(a) * Math.min(Math.abs(a), Math.abs(b)) : 0; g.lineTo(xa(i), mid - v * sc); }
+  g.lineTo(W, mid); g.fill(); g.globalAlpha = 1;
+  line(g, N, i => [xa(i), mid - A(i) * sc], col("--a"), 2);
+  line(g, N, i => [xa(i), mid - B(i) * sc], col("--b"), 2);
+  if ($("sum").checked) line(g, N, i => [xa(i), mid - (A(i) + B(i)) / 2 * sc], col("--sum"), 1.5);
+  const t0 = s.start * 1000;
+  g.fillStyle = col("--muted"); g.font = "18px " + col("--mono");
+  g.fillText(+t0.toFixed(1) + " ms", 6, H - 6); g.textAlign = "right"; g.fillText(+(t0 + s.win).toFixed(1) + " ms", W - 6, H - 6); g.textAlign = "left";
+}
+
+function drawSpec(s) {
+  const [g, W, H] = setup($("spec")), base = H - 24, sc = base - 10, N = Math.ceil(W);
+  const f = i => sliderToHz((i / N) * 1000), x = i => (i / N) * W, ea = exFn("a", s), eb = exFn("b", s);
+  g.strokeStyle = col("--grid"); g.fillStyle = col("--muted"); g.font = "18px " + col("--mono"); g.lineWidth = 2;
+  for (const [hz, lab] of [[20, "20"], [100, "100"], [1000, "1k"], [10000, "10k"], [20000, "20k Hz"]]) {
+    const px = hzToSlider(hz) / 1000 * W;
+    g.beginPath(); g.moveTo(px, 0); g.lineTo(px, base); g.stroke();
+    g.textAlign = hz === 20 ? "left" : hz === 20000 ? "right" : "center"; g.fillText(lab, px + (hz === 20 ? 4 : hz === 20000 ? -4 : 0), H - 6);
+  }
+  g.fillStyle = col("--shared"); g.globalAlpha = 0.45; g.beginPath(); g.moveTo(0, base);
+  for (let i = 0; i <= N; i++) g.lineTo(x(i), base - Math.min(ea(f(i)), eb(f(i))) * sc);
+  g.lineTo(W, base); g.fill(); g.globalAlpha = 1;
+  line(g, N, i => [x(i), base - ea(f(i)) * sc], col("--a"), 2);
+  line(g, N, i => [x(i), base - eb(f(i)) * sc], col("--b"), 2);
+}
+
+function render() {
+  const s = state();
+  for (const k of ["a", "b"]) $("f" + k + "o").value = fmtHz(s["f" + k]);
+  $("aao").value = $("aa").value + "%"; $("abo").value = $("ab").value + "%";
+  $("wino").value = s.win + " ms"; $("starto").value = Math.round(s.start * 1000) + " ms";
+  $("ov").textContent = Math.round(overlap(exFn("a", s), exFn("b", s)) * 100) + "%";
+  drawWave(s); drawSpec(s); syncAudio(s);
+}
+const renderAll = () => { drawCanopy(); drawGround(); render(); };
+
+function syncUI() {
+  for (const k of ["a", "b"]) {
+    const F = files[k];
+    $("f" + k).closest("label").hidden = !!F; $("clear" + k).hidden = !F;
+    if (F) { const el = $("name" + k); el.hidden = false; el.className = "fname"; el.textContent = F.name + " · " + (F.data.length / F.sr).toFixed(2) + " s"; }
+  }
+  const longest = Math.max(0, ...Object.values(files).filter(Boolean).map(F => F.data.length / F.sr));
+  $("startl").hidden = !longest; $("start").max = Math.max(0, Math.floor(longest * 1000) - 2);
+}
+
+async function load(k, file) {
+  stopAll();
+  ctx = ctx || new AudioContext();
+  try {
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer()), data = buf.getChannelData(0);
+    let peak = 0; for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]));
+    files[k] = { name: file.name, buf, data, sr: buf.sampleRate, peak: peak || 1, spec: spectrum(data, buf.sampleRate) };
+  } catch {
+    files[k] = null;
+    const el = $("name" + k); el.hidden = false; el.className = "fname err";
+    el.textContent = "Couldn't read " + file.name + ". Try a WAV or MP3 file.";
+  }
+  syncUI(); render();
+}
+for (const k of ["a", "b"]) {
+  $("file" + k).addEventListener("change", e => e.target.files[0] && load(k, e.target.files[0]));
+  $("clear" + k).onclick = () => { stopAll(); files[k] = null; $("file" + k).value = ""; $("name" + k).hidden = true; syncUI(); render(); };
+}
+
+// Audio: one oscillator (tone) or looping buffer (upload) per sound, started from a button press.
+let ctx, voices = {};
+function syncAudio(s) {
+  if (!ctx) return;
+  for (const k in voices) {
+    const v = voices[k];
+    if (v.o.frequency) v.o.frequency.setTargetAtTime(s["f" + k], ctx.currentTime, 0.02);
+    v.g.gain.setTargetAtTime((files[k] ? 0.5 / files[k].peak : 0.15) * s["a" + k], ctx.currentTime, 0.02);
+  }
+}
+function stopAll() {
+  for (const v of Object.values(voices)) { v.g.gain.setTargetAtTime(0, ctx.currentTime, 0.02); v.o.stop(ctx.currentTime + 0.1); }
+  voices = {}; document.querySelectorAll("button.on").forEach(b => b.classList.remove("on"));
+}
+function play(keys, btn) {
+  ctx = ctx || new AudioContext(); ctx.resume();
+  const wasOn = btn.classList.contains("on");
+  stopAll();
+  if (wasOn) return;
+  for (const k of keys) {
+    const g = ctx.createGain(); let o;
+    if (files[k]) { o = ctx.createBufferSource(); o.buffer = files[k].buf; o.loop = true; } else o = ctx.createOscillator();
+    g.gain.value = 0; o.connect(g).connect(ctx.destination); o.start(); voices[k] = { o, g };
+  }
+  btn.classList.add("on"); syncAudio(state());
+}
+$("pa").onclick = e => play(["a"], e.currentTarget);
+$("pb").onclick = e => play(["b"], e.currentTarget);
+$("pab").onclick = e => play(["a", "b"], e.currentTarget);
+
+document.querySelectorAll("input[type=range], input[type=checkbox]").forEach(i => i.addEventListener("input", render));
+addEventListener("resize", renderAll);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
+new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+document.fonts.ready.then(renderAll);
+renderAll();
+</script>
+
+</html>
