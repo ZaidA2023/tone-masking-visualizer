@@ -26,9 +26,9 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 17px;
-  padding-block: 0 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  padding-block: 28px 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .pix { display: block; width: 100%; image-rendering: pixelated; }
-#canopy { height: 72px; }
+select { font: 15px var(--body); border: 3px solid var(--edge); background: var(--panel); color: var(--fg); padding: 4px 6px; border-radius: 0; }
 #ground { height: 48px; margin-top: 32px; }
 main { max-width: 980px; margin: 0 auto; display: grid; gap: 22px; }
 h1 { font-family: var(--display); font-size: clamp(18px, 4vw, 28px); line-height: 1.4; margin: 0; text-wrap: balance; }
@@ -63,7 +63,6 @@ canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(
 @media (prefers-reduced-motion: reduce) { button:active { transform: none; } }
 </style>
 
-<canvas id="canopy" class="pix" aria-hidden="true"></canvas>
 <main>
   <header style="display:grid;gap:10px">
     <h1>Tone Masking Visualizer</h1>
@@ -98,8 +97,10 @@ canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(
       <div class="legend">
         <span style="--c:var(--a)">A</span><span style="--c:var(--b)">B</span><span style="--c:var(--shared)">Shared</span>
         <label class="check" for="sum"><input id="sum" type="checkbox"> Show A + B</label>
+        <label class="check" for="move"><input id="move" type="checkbox" checked> Move while playing</label>
       </div>
     </div>
+    <label for="speed">Wave speed <select id="speed"><option value="1">Real time (syncs to recordings)</option><option value="0.1">1/10 speed</option><option value="0.01" selected>1/100 speed</option><option value="0.001">1/1000 speed</option></select><span></span></label>
     <label for="win">Time shown <input id="win" type="range" min="2" max="100" value="10"><output id="wino"></output></label>
     <label for="start" id="startl" hidden>Start at <input id="start" type="range" min="0" max="1000" value="0"><output id="starto"></output></label>
     <canvas id="wave" class="plot"></canvas>
@@ -108,10 +109,13 @@ canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(
   <section class="panel">
     <div class="head">
       <h2>Cochlear excitation</h2>
-      <span class="stat">Overlap <b id="ov"></b> of the smaller pattern</span>
+      <div class="row">
+        <span class="stat">Overlap <b id="ov"></b> of the smaller pattern</span>
+        <span class="stat">Shared <b id="band"></b></span>
+      </div>
     </div>
     <canvas id="spec" class="plot"></canvas>
-    <p class="note">Horizontal axis is frequency on a log scale (20 Hz to 20 kHz, roughly the human range). Each tone is a bump about one critical band wide (Glasberg &amp; Moore ERB). An uploaded recording is analysed from its middle section and smoothed to critical-band resolution. Bands widen at high frequencies, so sounds there need to be farther apart to escape masking.</p>
+    <p class="note">Horizontal axis is frequency on a log scale (20 Hz to 20 kHz, roughly the human range). Each tone is a bump about one critical band wide (Glasberg &amp; Moore ERB). An uploaded recording is analysed from its middle section and smoothed to critical-band resolution; while it plays, the plot follows the sound live. Bands widen at high frequencies, so sounds there need to be farther apart to escape masking.</p>
   </section>
 </main>
 <canvas id="ground" class="pix" aria-hidden="true"></canvas>
@@ -155,26 +159,43 @@ function spectrum(data, sr) {
   const off = Math.floor((data.length - n) / 2), re = new Float64Array(n), im = new Float64Array(n);
   for (let i = 0; i < n; i++) re[i] = data[off + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)));
   fft(re, im);
-  const spec = new Float32Array(1001); let max = 0;
-  for (let j = 0; j <= 1000; j++) {
-    const f = sliderToHz(j), bw = erbWidth(f);
-    const lo = Math.max(1, Math.floor((f - bw / 2) * n / sr)), hi = Math.min(n / 2, Math.ceil((f + bw / 2) * n / sr));
-    let s = 0, c = 0; for (let b = lo; b <= hi; b++) { s += re[b] ** 2 + im[b] ** 2; c++; }
-    spec[j] = c ? Math.sqrt(s / c) : 0; max = Math.max(max, spec[j]);
-  }
+  const pow = new Float64Array(n / 2 + 1);
+  for (let b = 0; b <= n / 2; b++) pow[b] = re[b] ** 2 + im[b] ** 2;
+  const spec = smooth(pow, n, sr), max = Math.max(...spec);
   if (max) for (let j = 0; j <= 1000; j++) spec[j] /= max;
   return spec;
 }
-function specAt(F, f) {
+// Power per FFT bin (n-point FFT) -> amplitude averaged over one ERB at each of the 1001 log-spaced points.
+function smooth(pow, n, sr) {
+  const spec = new Float32Array(1001);
+  for (let j = 0; j <= 1000; j++) {
+    const f = sliderToHz(j), bw = erbWidth(f);
+    const lo = Math.max(1, Math.floor((f - bw / 2) * n / sr)), hi = Math.min(n / 2, Math.ceil((f + bw / 2) * n / sr));
+    let s = 0, c = 0; for (let b = lo; b <= hi; b++) { s += pow[b]; c++; }
+    spec[j] = c ? Math.sqrt(s / c) : 0;
+  }
+  return spec;
+}
+// Live spectrum of a playing recording from its analyser.
+// shortcut: normalised to the loudest frame heard since Play was pressed, so early frames can look louder than they are.
+function liveSpec(k) {
+  const v = voices[k], db = new Float32Array(v.an.frequencyBinCount);
+  v.an.getFloatFrequencyData(db);
+  const pow = db.map(d => Math.pow(10, d / 10)), spec = smooth(pow, v.an.fftSize, ctx.sampleRate);
+  v.max = Math.max(v.max || 0, ...spec);
+  if (v.max) for (let j = 0; j <= 1000; j++) spec[j] /= v.max;
+  files[k].live = spec;
+}
+function specAt(spec, f) {
   const x = Math.min(1000, Math.max(0, hzToSlider(f))), i = Math.floor(x), t = x - i;
-  return i >= 1000 ? F.spec[1000] : F.spec[i] * (1 - t) + F.spec[i + 1] * t;
+  return i >= 1000 ? spec[1000] : spec[i] * (1 - t) + spec[i + 1] * t;
 }
 
-const exFn = (k, s) => files[k] ? f => s["a" + k] * specAt(files[k], f) : f => excite(f, s["a" + k], s["f" + k]);
+const exFn = (k, s) => files[k] ? f => s["a" + k] * specAt(voices[k] && files[k].live || files[k].spec, f) : f => excite(f, s["a" + k], s["f" + k]);
 function waveFn(k, s) {
   const F = files[k], amp = s["a" + k];
-  if (!F) return t => amp * Math.sin(2 * Math.PI * s["f" + k] * t);
-  return t => { const v = F.data[Math.floor((t + s.start) * F.sr)]; return v === undefined ? 0 : amp * v / F.peak; };
+  if (!F) return t => amp * Math.sin(2 * Math.PI * s["f" + k] * (t + s.anim));
+  return t => amp * F.data[Math.floor((t + s.start + s.anim) * F.sr) % F.data.length] / F.peak;
 }
 
 function overlap(ea, eb) {
@@ -192,7 +213,7 @@ console.assert(overlap(f => excite(f, 1, 100), f => excite(f, 1, 8000)) < 0.01, 
 
 const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(2) + " kHz" : Math.round(f) + " Hz";
 const col = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state = () => ({ fa: sliderToHz(+$("fa").value), fb: sliderToHz(+$("fb").value), aa: $("aa").value / 100, ab: $("ab").value / 100, win: +$("win").value, start: +$("start").value / 1000 });
+const state = () => ({ fa: sliderToHz(+$("fa").value), fb: sliderToHz(+$("fb").value), aa: $("aa").value / 100, ab: $("ab").value / 100, win: +$("win").value, start: +$("start").value / 1000, anim });
 
 function setup(c) {
   const r = c.getBoundingClientRect(), d = devicePixelRatio || 1;
@@ -208,8 +229,6 @@ function line(g, n, fn, color, w) {
 
 // ---- 8-bit scenery: sprites are rows of palette letters, drawn one canvas pixel per cell, scaled up by CSS. ----
 const SPRITES = {
-  leaf: ["....kk..", "...kLlk.", "..kLllk.", ".kLlslk.", ".klslLk.", "kllsLk..", "kskkk...", "s......."],
-  leaf2: [".kk.....", "kllk....", "kLllk...", "klsllk..", ".kllsLk.", "..kllsk.", "...kkks.", ".......s"],
   tuft: ["...l....", ".l.l..l.", ".l.ll.l.", "lllklll.", "llkkkll."],
   flower: [".y.y.", "yyoyy", ".y.y.", "..l..", ".ll..", "..l.."],
 };
@@ -219,12 +238,6 @@ function sprite(g, name, x, y, p) {
 }
 // Deterministic scatter so the scenery doesn't jump on every redraw.
 const rnd = seed => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-function drawCanopy() {
-  const c = $("canopy"), S = 4, W = Math.ceil(c.clientWidth / S), H = Math.ceil(c.clientHeight / S), g = c.getContext("2d"), p = pal(), r = rnd(7);
-  c.width = W; c.height = H;
-  g.fillStyle = p.k; g.fillRect(0, 0, W, 3);
-  for (let x = -4; x < W; x += 5) { const y = Math.floor(r() * (H - 9)); sprite(g, r() < 0.5 ? "leaf" : "leaf2", x, y, p); }
-}
 function drawGround() {
   const c = $("ground"), S = 4, W = Math.ceil(c.clientWidth / S), H = Math.ceil(c.clientHeight / S), g = c.getContext("2d"), p = pal(), r = rnd(3);
   c.width = W; c.height = H;
@@ -246,7 +259,7 @@ function drawWave(s) {
   line(g, N, i => [xa(i), mid - A(i) * sc], col("--a"), 2);
   line(g, N, i => [xa(i), mid - B(i) * sc], col("--b"), 2);
   if ($("sum").checked) line(g, N, i => [xa(i), mid - (A(i) + B(i)) / 2 * sc], col("--sum"), 1.5);
-  const t0 = s.start * 1000;
+  const t0 = (s.start + s.anim) * 1000;
   g.fillStyle = col("--muted"); g.font = "18px " + col("--mono");
   g.fillText(+t0.toFixed(1) + " ms", 6, H - 6); g.textAlign = "right"; g.fillText(+(t0 + s.win).toFixed(1) + " ms", W - 6, H - 6); g.textAlign = "left";
 }
@@ -255,7 +268,7 @@ function drawSpec(s) {
   const [g, W, H] = setup($("spec")), base = H - 24, sc = base - 10, N = Math.ceil(W);
   const f = i => sliderToHz((i / N) * 1000), x = i => (i / N) * W, ea = exFn("a", s), eb = exFn("b", s);
   g.strokeStyle = col("--grid"); g.fillStyle = col("--muted"); g.font = "18px " + col("--mono"); g.lineWidth = 2;
-  for (const [hz, lab] of [[20, "20"], [100, "100"], [1000, "1k"], [10000, "10k"], [20000, "20k Hz"]]) {
+  for (const [hz, lab] of [[20, "20 Hz"], [50, "50"], [100, "100"], [200, "200"], [500, "500"], [1000, "1k"], [2000, "2k"], [5000, "5k"], [10000, "10k"], [20000, "20k"]]) {
     const px = hzToSlider(hz) / 1000 * W;
     g.beginPath(); g.moveTo(px, 0); g.lineTo(px, base); g.stroke();
     g.textAlign = hz === 20 ? "left" : hz === 20000 ? "right" : "center"; g.fillText(lab, px + (hz === 20 ? 4 : hz === 20000 ? -4 : 0), H - 6);
@@ -272,10 +285,30 @@ function render() {
   for (const k of ["a", "b"]) $("f" + k + "o").value = fmtHz(s["f" + k]);
   $("aao").value = $("aa").value + "%"; $("abo").value = $("ab").value + "%";
   $("wino").value = s.win + " ms"; $("starto").value = Math.round(s.start * 1000) + " ms";
-  $("ov").textContent = Math.round(overlap(exFn("a", s), exFn("b", s)) * 100) + "%";
+  const ea = exFn("a", s), eb = exFn("b", s);
+  $("ov").textContent = Math.round(overlap(ea, eb) * 100) + "%";
+  // Shared band: lowest to highest frequency where both patterns are above 2% of full scale.
+  let lo = -1, hi = -1;
+  for (let j = 0; j <= 1000; j++) if (Math.min(ea(sliderToHz(j)), eb(sliderToHz(j))) > 0.02) { if (lo < 0) lo = j; hi = j; }
+  $("band").textContent = lo < 0 ? "none" : fmtHz(sliderToHz(lo)) + " to " + fmtHz(sliderToHz(hi));
   drawWave(s); drawSpec(s); syncAudio(s);
 }
-const renderAll = () => { drawCanopy(); drawGround(); render(); };
+const renderAll = () => { drawGround(); render(); };
+
+// Animation: advance the wave window while sound plays. Slowed speeds make fast waves visible.
+let anim = 0, raf = 0, last = 0, playStart = 0;
+function tick(now) {
+  if (!Object.keys(voices).length || !$("move").checked) { raf = 0; return; }
+  const sp = +$("speed").value;
+  if (sp === 1) anim = Math.max(0, ctx.currentTime - playStart); else anim += (now - last) / 1000 * sp;
+  last = now;
+  for (const k in voices) if (voices[k].an) liveSpec(k);
+  render();
+  raf = requestAnimationFrame(tick);
+}
+function startAnim() { if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); } }
+$("move").addEventListener("change", startAnim);
+$("speed").addEventListener("change", () => { if ($("speed").value === "1" && ctx) anim = ctx.currentTime - playStart; });
 
 function syncUI() {
   for (const k of ["a", "b"]) {
@@ -328,9 +361,13 @@ function play(keys, btn) {
   for (const k of keys) {
     const g = ctx.createGain(); let o;
     if (files[k]) { o = ctx.createBufferSource(); o.buffer = files[k].buf; o.loop = true; } else o = ctx.createOscillator();
-    g.gain.value = 0; o.connect(g).connect(ctx.destination); o.start(); voices[k] = { o, g };
+    g.gain.value = 0; o.connect(g).connect(ctx.destination); voices[k] = { o, g };
+    if (files[k]) { const an = ctx.createAnalyser(); an.fftSize = 8192; o.connect(an); voices[k].an = an; }
   }
-  btn.classList.add("on"); syncAudio(state());
+  // Start every voice at the same instant so real-time mode lines up with what you hear.
+  playStart = ctx.currentTime + 0.05; anim = 0;
+  for (const k in voices) files[k] ? voices[k].o.start(playStart, (+$("start").value / 1000) % files[k].buf.duration) : voices[k].o.start(playStart);
+  btn.classList.add("on"); syncAudio(state()); startAnim();
 }
 $("pa").onclick = e => play(["a"], e.currentTarget);
 $("pb").onclick = e => play(["b"], e.currentTarget);
