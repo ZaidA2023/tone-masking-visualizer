@@ -24,6 +24,7 @@
   --a: #6aa8ff; --b: #ff9257; --shared: #c58bff; --sum: #def0c4; --err: #ff8a80;
   --leaf: #3f8a2c; --leaf-hi: #6fbb45; --leaf-dk: #1e4a1b; --stem: #5a3e24; --flower: #e8b93c; --soil: #4a3420; color-scheme: dark }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 17px;
   padding-block: 0 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .pix { display: block; width: 100%; image-rendering: pixelated; }
@@ -72,14 +73,14 @@ canvas.plot { width: 100%; height: 240px; display: block; border: 3px solid var(
   <section class="tones">
     <div class="tone">
       <h2><span class="dot" style="background:var(--a)"></span>Sound A</h2>
-      <label for="fa">Frequency <input id="fa" type="range" min="0" max="1000" value="566"><output id="fao"></output></label>
+      <label for="fa">Frequency <input id="fa" type="range" min="0" max="1000" value="466"><output id="fao"></output></label>
       <label for="aa">Loudness <input id="aa" type="range" min="0" max="100" value="80"><output id="aao"></output></label>
       <div class="row"><input id="filea" type="file" accept="audio/*" aria-label="Upload audio for sound A"><button id="cleara" hidden>Use tone instead</button></div>
       <span id="namea" class="fname" hidden></span>
     </div>
     <div class="tone">
       <h2><span class="dot" style="background:var(--b)"></span>Sound B</h2>
-      <label for="fb">Frequency <input id="fb" type="range" min="0" max="1000" value="580"><output id="fbo"></output></label>
+      <label for="fb">Frequency <input id="fb" type="range" min="0" max="1000" value="480"><output id="fbo"></output></label>
       <label for="ab">Loudness <input id="ab" type="range" min="0" max="100" value="45"><output id="abo"></output></label>
       <div class="row"><input id="fileb" type="file" accept="audio/*" aria-label="Upload audio for sound B"><button id="clearb" hidden>Use tone instead</button></div>
       <span id="nameb" class="fname" hidden></span>
